@@ -3,9 +3,10 @@ from supabase import create_client, Client
 import google.generativeai as genai
 from docx import Document
 from PyPDF2 import PdfReader
+from PIL import Image
 import io
 
-# 1. Setup - Pulling from your Streamlit Secrets
+# 1. Setup
 url: str = st.secrets["SUPABASE_URL"]
 key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
@@ -14,54 +15,57 @@ genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 # 2. Interface Styling
-st.set_page_config(page_title="Rob's AI Case Files", page_icon="⚖️")
+st.set_page_config(page_title="Rob's AI Case Files", page_icon="⚖️", layout="wide")
 st.title("⚖️ Rob's AI Case Files")
-st.subheader("Your Personal AI Notepad & Legal Assistant")
+st.subheader("Your Personal AI Notepad & Strategic Legal Assistant")
 
 # 3. Sidebar for Navigation
-menu = ["Add New Note", "Search My Files", "Chat with My Brain", "The Audit Lab"]
+menu = ["Add New Note", "Search My Files", "Chat & Stress Test", "The Audit Lab"]
 choice = st.sidebar.selectbox("Choose a Task", menu)
 
-# --- TASK 1: ADD NEW NOTE ---
+# --- TASK 1: ADD NEW NOTE (Now with OCR Vision) ---
 if choice == "Add New Note":
-    st.write("### Upload a Document or Type a Note")
-    
-    title = st.text_input("Document Title")
-    content_type = st.radio("Input Type", ["Text", "Upload PDF", "Upload Word"])
+    st.write("### 📝 Add to the Brain")
+    title = st.text_input("Document Title (e.g., 'Evidence Photo' or 'Case Summary')")
+    content_type = st.radio("Input Type", ["Text", "Upload PDF/Word", "Upload Image (OCR)"])
     
     content = ""
     if content_type == "Text":
         content = st.text_area("Type your notes here...")
     
-    elif content_type == "Upload PDF":
-        uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+    elif content_type == "Upload PDF/Word":
+        uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx"])
         if uploaded_file:
-            pdf_reader = PdfReader(uploaded_file)
-            content = "\n".join([page.extract_text() for page in pdf_reader.pages])
+            if uploaded_file.type == "application/pdf":
+                pdf_reader = PdfReader(uploaded_file)
+                content = "\n".join([page.extract_text() for page in pdf_reader.pages])
+            else:
+                doc = Document(uploaded_file)
+                content = "\n".join([para.text for para in doc.paragraphs])
 
-    elif content_type == "Upload Word":
-        uploaded_file = st.file_uploader("Choose a Word Doc", type="docx")
-        if uploaded_file:
-            doc = Document(uploaded_file)
-            content = "\n".join([para.text for para in doc.paragraphs])
+    elif content_type == "Upload Image (OCR)":
+        uploaded_img = st.file_uploader("Upload a photo of a document", type=["jpg", "jpeg", "png"])
+        if uploaded_img:
+            img = Image.open(uploaded_img)
+            st.image(img, caption="Uploaded Image", width=300)
+            if st.button("Extract Text from Image"):
+                with st.spinner("Gemini is reading the photo..."):
+                    res = model.generate_content(["Extract all text from this image as a clean document:", img])
+                    content = res.text
+                    st.text_area("Extracted Text", content, height=200)
 
     if st.button("Save to Cloud"):
         if title and content:
-            data = {"title": title, "content": content}
-            supabase.table("documents").insert(data).execute()
+            supabase.table("documents").insert({"title": title, "content": content}).execute()
             st.success(f"Successfully saved: {title}")
         else:
-            st.error("Please provide both a title and content.")
+            st.error("Missing title or content.")
 
 # --- TASK 2: SEARCH FILES ---
 elif choice == "Search My Files":
-    st.write("### Search Your Saved Notes")
+    st.write("### 📂 Search Your Brain")
     search_query = st.text_input("Search by title...")
-    
-    if search_query:
-        docs = supabase.table("documents").select("*").ilike("title", f"%{search_query}%").execute()
-    else:
-        docs = supabase.table("documents").select("*").execute()
+    docs = supabase.table("documents").select("*").ilike("title", f"%{search_query}%").execute() if search_query else supabase.table("documents").select("*").execute()
     
     for d in docs.data:
         with st.expander(d['title']):
@@ -70,70 +74,46 @@ elif choice == "Search My Files":
                 supabase.table("documents").delete().eq("id", d['id']).execute()
                 st.rerun()
 
-# --- TASK 3: CHAT WITH MY BRAIN ---
-elif choice == "Chat with My Brain":
-    st.write("### Ask Questions About Your Saved Files")
-    
+# --- TASK 3: CHAT & STRESS TEST ---
+elif choice == "Chat & Stress Test":
+    st.write("### 💬 Chat with Your Files")
     docs = supabase.table("documents").select("content").execute()
+    all_text = "\n".join([str(d['content']) for d in docs.data]) if docs.data else ""
     
-    if not docs.data:
-        st.warning("No documents found in the cloud yet. Upload something first!")
-        all_text = ""
-    else:
-        all_text = "\n".join([str(d['content']) for d in docs.data])
+    user_question = st.text_input("Ask a question or request a stress test...")
+    col1, col2 = st.columns(2)
     
-    user_question = st.text_input("What do you want to know?")
+    with col1:
+        if st.button("Ask Gemini") and user_question and all_text:
+            res = model.generate_content(f"Context:\n{all_text}\n\nQuestion: {user_question}")
+            st.write(res.text)
     
-    if user_question and all_text:
-        with st.spinner("Thinking..."):
-            prompt = f"Using the following personal notes, answer the question: {user_question}\n\nNotes:\n{all_text}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            answer_text = response.text
-            st.write(answer_text)
-            
-            st.download_button(
-                label="Download Answer as .txt",
-                data=answer_text,
-                file_name="ai_answer.txt",
-                mime="text/plain"
-            )
+    with col2:
+        if st.button("🔥 Run Opposing Counsel Test") and all_text:
+            st.warning("Running Stress Test...")
+            res = model.generate_content(f"Act as a hostile opposing counsel. Analyze these notes and find contradictions, weaknesses, or missing evidence that could hurt my case:\n\n{all_text}")
+            st.write(res.text)
 
-# --- TASK 4: THE AUDIT LAB ---
+# --- TASK 4: THE AUDIT LAB (With Legalese Translator) ---
 elif choice == "The Audit Lab":
-    st.write("### 🔍 The Audit Lab: New File vs. The Brain")
-    st.info("Upload a file to see what's new compared to your existing notes.")
-
-    uploaded_audit = st.file_uploader("Upload file for auditing", type=["pdf", "docx"])
+    st.write("### 🔍 The Audit Lab")
+    uploaded_audit = st.file_uploader("Upload a new file to Audit or Translate", type=["pdf", "docx"])
     
     if uploaded_audit:
-        new_content = ""
         if uploaded_audit.type == "application/pdf":
-            pdf_reader = PdfReader(uploaded_audit)
-            new_content = "\n".join([p.extract_text() for p in pdf_reader.pages])
+            new_content = "\n".join([p.extract_text() for p in PdfReader(uploaded_audit).pages])
         else:
-            doc = Document(uploaded_audit)
-            new_content = "\n".join([p.text for p in doc.paragraphs])
+            new_content = "\n".join([p.text for p in Document(uploaded_audit).paragraphs])
         
-        if new_content:
-            st.success("New file loaded! Ready to audit.")
-            
-            if st.button("Run Audit"):
-                with st.spinner("Comparing against the Brain..."):
-                    # Pull existing brain data
-                    docs = supabase.table("documents").select("content").execute()
-                    brain_text = "\n".join([str(d['content']) for d in docs.data])
-                    
-                    audit_prompt = f"Compare the following NEW DOCUMENT to my EXISTING BRAIN. Extract only the NEW information, changes, or updates. Ignore everything already in the Brain. Format as a clean list.\n\nNEW DOCUMENT:\n{new_content}\n\nEXISTING BRAIN:\n{brain_text}"
-                    
-                    response = model.generate_content(audit_prompt)
-                    st.markdown("### 📋 Audit Report (Unique Info):")
-                    report_text = response.text
-                    st.write(report_text)
-                    
-                    st.download_button(
-                        label="Download Audit Report (.txt)",
-                        data=report_text,
-                        file_name="audit_report.txt",
-                        mime="text/plain"
-                    )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Run Difference Audit"):
+                docs = supabase.table("documents").select("content").execute()
+                brain_text = "\n".join([str(d['content']) for d in docs.data])
+                res = model.generate_content(f"Compare NEW to BRAIN. Extract ONLY new info:\nNEW:\n{new_content}\nBRAIN:\n{brain_text}")
+                st.write(res.text)
+        
+        with col_b:
+            if st.button("⚖️ Translate Legalese to Plain English"):
+                res = model.generate_content(f"Rewrite this complex document in simple, clear English that a high schooler could understand. Keep all the important facts:\n\n{new_content}")
+                st.write(res.text)
