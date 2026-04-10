@@ -2,5 +2,6 @@ streamlit
 supabase
 google-generativeai
 python-docx
-PyPDF2
+pypdf
 Pillow
+streamlit-mic-recorder
