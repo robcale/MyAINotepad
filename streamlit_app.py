@@ -1,458 +1,95 @@
-import streamlit as st
+ import streamlit as st
+from supabase import create_client, Client
 import google.generativeai as genai
-from supabase import create_client
-from PyPDF2 import PdfReader
 from docx import Document
-
-# --- SETUP ---
-st.set_page_config(page_title="Rob's AI Case Files", layout="wide")
-
-# Connect to your secrets
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
-    
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in doc.paragraphs])
-    return None
-
-# --- SIDEBAR: UPLOAD ---
-with st.sidebar:
-    st.header("Add to Case File")
-    uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
-    
-    if uploaded_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")import streamlit as st
-import google.generativeai as genai
-from supabase import create_client
 from PyPDF2 import PdfReader
-from docx import Document
+import io
 
-# --- SETUP ---
-st.set_page_config(page_title="Rob's AI Case Files", layout="wide")
+# 1. Setup - Pulling from your Streamlit Secrets
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
 
-# Connect to your secrets
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# 2. Interface Styling
+st.set_page_config(page_title="Rob's AI Case Files", page_icon="⚖️")
+st.title("⚖️ Rob's AI Case Files")
+st.subheader("Your Personal AI Notepad & Legal Assistant")
+
+# 3. Sidebar for Navigation
+menu = ["Add New Note", "Search My Files", "Chat with My Brain"]
+choice = st.sidebar.selectbox("Choose a Task", menu)
+
+# --- TASK 1: ADD NEW NOTE ---
+if choice == "Add New Note":
+    st.write("### Upload a Document or Type a Note")
     
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.import streamlit as st
-import google.generativeai as genai
-from supabase import create_client
-from PyPDF2 import PdfReader
-from docx import Document
-
-# --- SETUP ---
-st.set_page_config(page_title="Rob's AI Case Files", layout="wide")
-
-# Connect to your secrets
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+    title = st.text_input("Document Title")
+    content_type = st.radio("Input Type", ["Text", "Upload PDF", "Upload Word"])
     
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in doc.paragraphs])
-    return None
-
-# --- SIDEBAR: UPLOAD ---
-with st.sidebar:
-    st.header("Add to Case File")
-    uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
+    content = ""
+    if content_type == "Text":
+        content = st.text_area("Type your notes here...")
     
-    if uploaded_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
+    elif content_type == "Upload PDF":
+        uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+        if uploaded_file:
+            pdf_reader = PdfReader(uploaded_file)
+            for page in pdf_reader.pages:
+                content += page.extract_text()
 
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
+    elif content_type == "Upload Word":
+        uploaded_file = st.file_uploader("Choose a Word Doc", type="docx")
+        if uploaded_file:
+            doc = Document(uploaded_file)
+            for para in doc.paragraphs:
+                content += para.text + "\n"
 
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
+    if st.button("Save to Cloud"):
+        if title and content:
+            data = {"title": title, "content": content}
+            response = supabase.table("documents").insert(data).execute()
+            st.success(f"Successfully saved: {title}")
         else:
-            st.warning("No documents found in the cloud yet. Upload something first!")import streamlit as st
-import google.generativeai as genai
-from supabase import create_client
-from PyPDF2 import PdfReader
-from docx import Document
+            st.error("Please provide both a title and content.")
 
-# --- SETUP ---
-st.set_page_config(page_title="Rob's AI Case Files", layout="wide")
-
-# Connect to your secrets
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+# --- TASK 2: SEARCH FILES ---
+elif choice == "Search My Files":
+    st.write("### Search Your Saved Notes")
+    search_query = st.text_input("Search by title...")
     
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in doc.paragraphs])
-    return None
-
-# --- SIDEBAR: UPLOAD ---
-with st.sidebar:
-    st.header("Add to Case File")
-    uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
+    if search_query:
+        docs = supabase.table("documents").select("*").ilike("title", f"%{search_query}%").execute()
+    else:
+        docs = supabase.table("documents").select("*").execute()
     
-    if uploaded_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
+    for d in docs.data:
+        with st.expander(d['title']):
+            st.write(d['content'])
+            if st.button(f"Delete {d['title']}", key=d['id']):
+                supabase.table("documents").delete().eq("id", d['id']).execute()
+                st.rerun()
 
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!"import streamlit as st
-import google.generativeai as genai
-from supabase import create_client
-from PyPDF2 import PdfReader
-from docx import Document
-
-# --- SETUP ---
-st.set_page_config(page_title="Rob's AI Case Files", layout="wide")
-
-# Connect to your secrets
-try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+# --- TASK 3: CHAT WITH MY BRAIN ---
+elif choice == "Chat with My Brain":
+    st.write("### Ask Questions About Your Saved Files")
     
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in doc.paragraphs])
-    return None
-
-# --- SIDEBAR: UPLOAD ---
-with st.sidebar:
-    st.header("Add to Case File")
-    uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
+    # Corrected section that was causing your error
+    docs = supabase.table("documents").select("content").execute()
     
-    if uploaded_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")  ['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")enerativeMode>
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in   d_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")  ['content']>
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")enerativeMode>
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-d_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")  ['content']>
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")enerativeMode>
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-d_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            context = " ".join([d['content'] for d in docs.data])
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")  ['content']>
-            # 2. Ask Gemini
-            prompt = f"Using these documents: {context}\n\nQuestion: {query}"
-            response = model.generate_content(prompt)
-            st.markdown("### Answer:")
-            st.write(response.text)
-        else:
-            st.warning("No documents found in the cloud yet. Upload something first!")enerativeMode>
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files") oud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.data:
-            contextiveModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Check your Streamlit Secrets! Something is missing.")
-
-st.title("📑 Rob's AI Case Files")
-
-# --- HELPER FUNCTIONS ---
-def extract_text(file):
-    if file.type == "text/plain":
-        return file.read().decode("utf-8")
-    elif file.type == "application/pdf":
-        pdf_reader = PdfReader(file)
-        return " ".join([page.extract_text() for page in pdf_reader.pages])
-    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(file)
-        return " ".join([para.text for para in doc.paragraphs])
-    return None
-
-# --- SIDEBAR: UPLOAD ---
-with st.sidebar:
-    st.header("Add to Case File")
-    uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
+    if not docs.data:
+        st.warning("No documents found in the cloud yet. Upload something first!")
+        all_text = ""
+    else:
+        all_text = "\n".join([str(d['content']) for d in docs.data])
     
-    if uploaded_file:
-        if st.button("Save to Cloud"):
-            with st.spinner("Processing text..."):
-                file_text = extract_text(uploaded_file)
-                data = {"file_name": uploaded_file.name, "content": file_text}
-                # Saves to your Supabase table
-                supabase.table("documents").insert(data).execute()
-                st.success(f"Successfully saved {uploaded_file.name}!")
-
-# --- MAIN INTERFACE: SEARCH ---
-query = st.text_input("Ask a question about your files:")
-
-if query:
-    with st.spinner("Searching..."):
-        # 1. Pull data from Supabase
-        docs = supabase.table("documents").select("content").execute()
-        if docs.da
+    user_question = st.text_input("What do you want to know?")
+    
+    if user_question and all_text:
+        with st.spinner("Thinking..."):
+            prompt = f"Using the following personal notes, answer the question: {user_question}\n\nNotes:\n{all_text}"
+            response = model.generate_content(prompt)
+            st.markdown("### Answer:")
+            st.write(response.text)
