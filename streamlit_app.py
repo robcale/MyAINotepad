@@ -18,121 +18,130 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 # 2. Interface Styling
 st.set_page_config(page_title="Rob's AI Case Files", page_icon="⚖️", layout="wide")
 st.title("⚖️ Rob's AI Case Files")
-st.subheader("Personal AI Research & Strategic Legal Assistant")
 
 # 3. Sidebar for Navigation
-menu = ["Add New Note", "Search My Files", "Chat & Stress Test", "The Audit Lab"]
+menu = ["Add New Note / Mass Upload", "Search & Edit Files", "Chat & Stress Test", "The Audit Lab"]
 choice = st.sidebar.selectbox("Choose a Task", menu)
 
-# --- TASK 1: ADD NEW NOTE (OCR & Voice Supported) ---
-if choice == "Add New Note":
-    st.write("### 📝 Add to the Brain")
-    title = st.text_input("Document Title (e.g., 'Evidence Photo' or 'Case Summary')")
-    content_type = st.radio("Input Type", ["Text", "Voice Memo", "Upload PDF/Word", "Upload Image (OCR)"])
+# --- TASK 1: ADD NEW NOTE / MASS UPLOAD (With AI Auto-Naming) ---
+if choice == "Add New Note / Mass Upload":
+    st.write("### 📝 Smart Add to the Brain")
+    st.info("AI will automatically scan and name your documents based on their content.")
     
-    content = ""
-    if content_type == "Text":
+    input_method = st.radio("Choose Method", ["Upload Multiple Files (PDF, Word, TXT)", "Voice Memo", "Manual Text Entry", "Upload Image (OCR)"])
+    
+    if input_method == "Upload Multiple Files (PDF, Word, TXT)":
+        uploaded_files = st.file_uploader("Drag and drop files", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+        
+        if uploaded_files:
+            if st.button(f"AI Scan & Save {len(uploaded_files)} Files"):
+                for uploaded_file in uploaded_files:
+                    content = ""
+                    if uploaded_file.type == "application/pdf":
+                        pdf_reader = PdfReader(uploaded_file)
+                        content = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+                    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                        doc = Document(uploaded_file)
+                        content = "\n".join([para.text for para in doc.paragraphs])
+                    elif uploaded_file.type == "text/plain":
+                        content = uploaded_file.read().decode("utf-8")
+                    
+                    if content:
+                        # --- AI AUTO-NAMING LOGIC ---
+                        name_prompt = f"Scan this document and create a short, professional title (max 6 words). Categorize it logically (e.g. Legal, Tech, Personal, Admin). Text: {content[:1000]}"
+                        ai_title = model.generate_content(name_prompt).text.strip().replace('"', '')
+                        
+                        supabase.table("documents").insert({"title": ai_title, "content": content}).execute()
+                        st.write(f"✅ Auto-Named: **{ai_title}**")
+                st.success("All files processed and saved!")
+
+    elif input_method == "Manual Text Entry":
         content = st.text_area("Type your notes here...")
-    
-    elif content_type == "Voice Memo":
-        st.write("Click to record your thoughts:")
+        if st.button("AI Auto-Name & Save"):
+            if content:
+                ai_title = model.generate_content(f"Create a short title for this note: {content[:500]}").text.strip().replace('"', '')
+                supabase.table("documents").insert({"title": ai_title, "content": content}).execute()
+                st.success(f"Saved as: {ai_title}")
+
+    elif input_method == "Voice Memo":
         audio = mic_recorder(start_prompt="🎤 Start Recording", stop_prompt="🛑 Stop", key='recorder')
         if audio:
-            with st.spinner("Transcribing your voice..."):
+            with st.spinner("Transcribing..."):
                 audio_data = {'mime_type': 'audio/wav', 'data': audio['bytes']}
-                res = model.generate_content(["Summarize and transcribe this voice note into clean text:", audio_data])
-                content = res.text
-                st.text_area("Transcribed Text", content, height=200)
+                transcript = model.generate_content(["Transcribe and summarize this accurately:", audio_data]).text
+                st.text_area("Transcribed Text", transcript, height=200)
+                if st.button("Save Transcription"):
+                    ai_title = model.generate_content(f"Short title for this voice note: {transcript[:500]}").text.strip().replace('"', '')
+                    supabase.table("documents").insert({"title": ai_title, "content": transcript}).execute()
+                    st.success(f"Saved as: {ai_title}")
 
-    elif content_type == "Upload PDF/Word":
-        uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx"])
-        if uploaded_file:
-            if uploaded_file.type == "application/pdf":
-                pdf_reader = PdfReader(uploaded_file)
-                content = "\n".join([page.extract_text() for page in pdf_reader.pages])
-            else:
-                doc = Document(uploaded_file)
-                content = "\n".join([para.text for para in doc.paragraphs])
-
-    elif content_type == "Upload Image (OCR)":
-        uploaded_img = st.file_uploader("Upload a photo of evidence/notes", type=["jpg", "jpeg", "png"])
+    elif input_method == "Upload Image (OCR)":
+        uploaded_img = st.file_uploader("Upload photo", type=["jpg", "jpeg", "png"])
         if uploaded_img:
             img = Image.open(uploaded_img)
-            st.image(img, caption="Uploaded Image", width=300)
-            if st.button("Extract Text from Image"):
-                with st.spinner("Reading photo..."):
-                    res = model.generate_content(["Extract all text from this image as a clean document:", img])
-                    content = res.text
-                    st.text_area("Extracted Text", content, height=200)
+            if st.button("Extract & Auto-Name"):
+                text_content = model.generate_content(["Extract all text from this image:", img]).text
+                ai_title = model.generate_content(f"Short title for this image text: {text_content[:500]}").text.strip().replace('"', '')
+                supabase.table("documents").insert({"title": ai_title, "content": text_content}).execute()
+                st.success(f"Saved as: {ai_title}")
 
-    if st.button("Save to Cloud"):
-        if title and content:
-            supabase.table("documents").insert({"title": title, "content": content}).execute()
-            st.success(f"Successfully saved: {title}")
-        else:
-            st.error("Missing title or content.")
+# --- TASK 2: SEARCH & EDIT FILES ---
+elif choice == "Search & Edit Files":
+    st.write("### 📂 Your Brain Database")
+    if st.button("🔄 Sync & Refresh Database"):
+        st.cache_data.clear()
+        st.rerun()
 
-# --- TASK 2: SEARCH FILES ---
-elif choice == "Search My Files":
-    st.write("### 📂 Search Your Brain")
-    search_query = st.text_input("Search by title...")
-    
-    if search_query:
-        docs = supabase.table("documents").select("*").ilike("title", f"%{search_query}%").execute()
-    else:
-        docs = supabase.table("documents").select("*").execute()
+    search_query = st.text_input("Search files...")
+    docs = supabase.table("documents").select("*").ilike("title", f"%{search_query}%").execute() if search_query else supabase.table("documents").select("*").execute()
     
     for d in docs.data:
-        with st.expander(d['title']):
-            st.write(d['content'])
-            if st.button(f"Delete {d['title']}", key=d['id']):
-                supabase.table("documents").delete().eq("id", d['id']).execute()
-                st.rerun()
+        with st.expander(f"📄 {d['title']}"):
+            new_title = st.text_input("Edit Title:", d['title'], key=f"title_{d['id']}")
+            new_edit = st.text_area("Edit Content:", d['content'], key=f"edit_{d['id']}")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Save Changes", key=f"save_{d['id']}"):
+                    supabase.table("documents").update({"title": new_title, "content": new_edit}).eq("id", d['id']).execute()
+                    st.success("Updated!")
+                    st.rerun()
+            with col2:
+                if st.button("🗑️ Delete File", key=f"del_{d['id']}"):
+                    supabase.table("documents").delete().eq("id", d['id']).execute()
+                    st.rerun()
 
-# --- TASK 3: CHAT & STRESS TEST (Citations Enabled) ---
+# --- TASK 3: CHAT & STRESS TEST ---
 elif choice == "Chat & Stress Test":
-    st.write("### 💬 Chat with Your Files")
+    st.write("### 💬 Smart Search & Analysis")
     docs = supabase.table("documents").select("title, content").execute()
-    
-    all_text = ""
-    for d in docs.data:
-        all_text += f"\n\n--- DOCUMENT TITLE: {d['title']} ---\n{d['content']}"
+    all_text = "\n".join([f"[{d['title']}]: {d['content']}" for d in docs.data]) if docs.data else ""
 
-    st.write("Ask a question by typing or using your voice:")
-    v_audio = mic_recorder(start_prompt="🎙️ Ask by Voice", stop_prompt="🛑 Stop & Process", key='chat_recorder')
-    user_question = st.text_input("Or type your question here...")
+    v_audio = mic_recorder(start_prompt="🎙️ Ask by Voice", stop_prompt="🛑 Stop", key='chat_recorder')
+    user_question = st.text_input("Search the brain...")
 
     if v_audio:
         with st.spinner("Processing voice..."):
             audio_data = {'mime_type': 'audio/wav', 'data': v_audio['bytes']}
-            v_res = model.generate_content(["Transcribe this user question briefly:", audio_data])
-            user_question = v_res.text
-            st.info(f"Searching for: {user_question}")
+            user_question = model.generate_content(["Transcribe question:", audio_data]).text
+            st.info(f"Question: {user_question}")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Search & Analyze") and user_question and all_text:
-            with st.spinner("Searching the Brain..."):
-                prompt = f"Use these files to answer the question. Cite which 'DOCUMENT TITLE' you found it in.\n\nFILES:\n{all_text}\n\nQUESTION: {user_question}"
+    if user_question and all_text:
+        if st.button("Run Smart Analysis"):
+            with st.spinner("Deep searching files..."):
+                prompt = f"Answer question based on these files. Cite [Title] in your response.\nDATA:\n{all_text}\nQUESTION:\n{user_question}"
                 res = model.generate_content(prompt)
+                st.markdown("### 🔍 AI Findings:")
                 st.write(res.text)
-                st.download_button("Download Answer (.txt)", res.text, file_name="ai_answer.txt")
-    
-    with col2:
-        if st.button("🔥 Run Opposing Counsel Test") and all_text:
-            with st.spinner("Analyzing vulnerabilities..."):
-                res = model.generate_content(f"Act as a hostile lawyer. Find all weaknesses or contradictions in these notes:\n\n{all_text}")
-                st.write(res.text)
-                st.download_button("Download Stress Test (.txt)", res.text, file_name="stress_test.txt")
 
-# --- TASK 4: THE AUDIT LAB (Audit & Translate) ---
+# --- TASK 4: THE AUDIT LAB ---
 elif choice == "The Audit Lab":
     st.write("### 🔍 The Audit Lab")
-    uploaded_audit = st.file_uploader("Upload file for Audit or Translation", type=["pdf", "docx"])
-    
+    uploaded_audit = st.file_uploader("Upload file to Compare or Translate", type=["pdf", "docx", "txt"])
     if uploaded_audit:
         if uploaded_audit.type == "application/pdf":
-            new_content = "\n".join([p.extract_text() for p in PdfReader(uploaded_audit).pages])
+            new_content = "\n".join([p.extract_text() for p in PdfReader(uploaded_audit).pages if p.extract_text()])
+        elif uploaded_audit.type == "text/plain":
+            new_content = uploaded_audit.read().decode("utf-8")
         else:
             new_content = "\n".join([p.text for p in Document(uploaded_audit).paragraphs])
         
@@ -141,12 +150,9 @@ elif choice == "The Audit Lab":
             if st.button("Run Difference Audit"):
                 docs = supabase.table("documents").select("content").execute()
                 brain_text = "\n".join([str(d['content']) for d in docs.data])
-                res = model.generate_content(f"Extract ONLY new or conflicting info from NEW compared to BRAIN.\nNEW:\n{new_content}\nBRAIN:\n{brain_text}")
+                res = model.generate_content(f"Compare NEW to BRAIN. Extract UNIQUE info:\nNEW:\n{new_content}\nBRAIN:\n{brain_text}")
                 st.write(res.text)
-                st.download_button("Download Audit (.txt)", res.text, file_name="audit_report.txt")
-        
         with col_b:
             if st.button("⚖️ Translate Legalese"):
-                res = model.generate_content(f"Simplify this document into plain English for a non-lawyer:\n\n{new_content}")
+                res = model.generate_content(f"Simplify this to plain English for a non-lawyer:\n\n{new_content}")
                 st.write(res.text)
-                st.download_button("Download Translation (.txt)", res.text, file_name="translation.txt")
