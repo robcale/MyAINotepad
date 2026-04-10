@@ -19,7 +19,7 @@ st.title("⚖️ Rob's AI Case Files")
 st.subheader("Your Personal AI Notepad & Legal Assistant")
 
 # 3. Sidebar for Navigation
-menu = ["Add New Note", "Search My Files", "Chat with My Brain"]
+menu = ["Add New Note", "Search My Files", "Chat with My Brain", "The Audit Lab"]
 choice = st.sidebar.selectbox("Choose a Task", menu)
 
 # --- TASK 1: ADD NEW NOTE ---
@@ -37,20 +37,18 @@ if choice == "Add New Note":
         uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
         if uploaded_file:
             pdf_reader = PdfReader(uploaded_file)
-            for page in pdf_reader.pages:
-                content += page.extract_text()
+            content = "\n".join([page.extract_text() for page in pdf_reader.pages])
 
     elif content_type == "Upload Word":
         uploaded_file = st.file_uploader("Choose a Word Doc", type="docx")
         if uploaded_file:
             doc = Document(uploaded_file)
-            for para in doc.paragraphs:
-                content += para.text + "\n"
+            content = "\n".join([para.text for para in doc.paragraphs])
 
     if st.button("Save to Cloud"):
         if title and content:
             data = {"title": title, "content": content}
-            response = supabase.table("documents").insert(data).execute()
+            supabase.table("documents").insert(data).execute()
             st.success(f"Successfully saved: {title}")
         else:
             st.error("Please provide both a title and content.")
@@ -76,7 +74,6 @@ elif choice == "Search My Files":
 elif choice == "Chat with My Brain":
     st.write("### Ask Questions About Your Saved Files")
     
-    # Corrected section that was causing your error
     docs = supabase.table("documents").select("content").execute()
     
     if not docs.data:
@@ -92,4 +89,51 @@ elif choice == "Chat with My Brain":
             prompt = f"Using the following personal notes, answer the question: {user_question}\n\nNotes:\n{all_text}"
             response = model.generate_content(prompt)
             st.markdown("### Answer:")
-            st.write(response.text)
+            answer_text = response.text
+            st.write(answer_text)
+            
+            st.download_button(
+                label="Download Answer as .txt",
+                data=answer_text,
+                file_name="ai_answer.txt",
+                mime="text/plain"
+            )
+
+# --- TASK 4: THE AUDIT LAB ---
+elif choice == "The Audit Lab":
+    st.write("### 🔍 The Audit Lab: New File vs. The Brain")
+    st.info("Upload a file to see what's new compared to your existing notes.")
+
+    uploaded_audit = st.file_uploader("Upload file for auditing", type=["pdf", "docx"])
+    
+    if uploaded_audit:
+        new_content = ""
+        if uploaded_audit.type == "application/pdf":
+            pdf_reader = PdfReader(uploaded_audit)
+            new_content = "\n".join([p.extract_text() for p in pdf_reader.pages])
+        else:
+            doc = Document(uploaded_audit)
+            new_content = "\n".join([p.text for p in doc.paragraphs])
+        
+        if new_content:
+            st.success("New file loaded! Ready to audit.")
+            
+            if st.button("Run Audit"):
+                with st.spinner("Comparing against the Brain..."):
+                    # Pull existing brain data
+                    docs = supabase.table("documents").select("content").execute()
+                    brain_text = "\n".join([str(d['content']) for d in docs.data])
+                    
+                    audit_prompt = f"Compare the following NEW DOCUMENT to my EXISTING BRAIN. Extract only the NEW information, changes, or updates. Ignore everything already in the Brain. Format as a clean list.\n\nNEW DOCUMENT:\n{new_content}\n\nEXISTING BRAIN:\n{brain_text}"
+                    
+                    response = model.generate_content(audit_prompt)
+                    st.markdown("### 📋 Audit Report (Unique Info):")
+                    report_text = response.text
+                    st.write(report_text)
+                    
+                    st.download_button(
+                        label="Download Audit Report (.txt)",
+                        data=report_text,
+                        file_name="audit_report.txt",
+                        mime="text/plain"
+                    )
