@@ -7,15 +7,21 @@ from PIL import Image
 from streamlit_mic_recorder import mic_recorder
 import datetime
 
-# 1. Setup
-url: str = st.secrets["SUPABASE_URL"]
-key: str = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
-
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
-
+# --- PAGE SETUP ---
 st.set_page_config(page_title="Rob's AI Case Files", page_icon="⚖️", layout="wide")
+
+# --- DATABASE & AI SETUP ---
+try:
+    url: str = st.secrets["SUPABASE_URL"]
+    key: str = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # The updated, high-speed engine
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except KeyError as e:
+    st.error(f"🚨 Missing Secret/API Key: {e}. Please check your Streamlit Secrets.")
+    st.stop()
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.title("⚖️ The War Room")
@@ -40,15 +46,19 @@ if choice == "1. Mass Intake (Upload)":
                         doc = Document(uploaded_file)
                         content = "\n".join([para.text for para in doc.paragraphs])
                     elif uploaded_file.type == "text/plain":
-                        content = uploaded_file.read().decode("utf-8")
+                        content = uploaded_file.read().decode("utf-8", errors="ignore")
                     
                     if content:
-                        name_prompt = f"Create a short, professional title (max 6 words) for this document: {content[:1000]}"
-                        ai_title = model.generate_content(name_prompt).text.strip().replace('"', '')
-                        # Automatically tags it as HOLD
-                        final_title = f"[HOLD] {ai_title}"
-                        supabase.table("documents").insert({"title": final_title, "content": content}).execute()
-                        st.write(f"✅ Sent to Hold: **{final_title}**")
+                        try:
+                            name_prompt = f"Create a short, professional title (max 6 words) for this document: {content[:1000]}"
+                            ai_title = model.generate_content(name_prompt).text.strip().replace('"', '')
+                            # Automatically tags it as HOLD
+                            final_title = f"[HOLD] {ai_title}"
+                            supabase.table("documents").insert({"title": final_title, "content": content}).execute()
+                            st.write(f"✅ Sent to Hold: **{final_title}**")
+                        except Exception as e:
+                            st.error(f"Error processing {uploaded_file.name}: {e}")
+                            
             st.success("Intake complete! Go to The Processing Desk to review.")
 
 # --- TASK 2: THE PROCESSING DESK (Audit & Clean) ---
